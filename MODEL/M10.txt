@@ -1,0 +1,84 @@
+********** MODEL NAME
+M10
+********** MODEL NOTES
+********** MODEL STATES
+
+d/dt(sng)     = (f1 + f2) - sng*kd
+
+d/dt(LS)      = +input     -v_S_T0
+
+d/dt(T0)       = +v_S_T0    -v_T0_T 
+
+d/dt(T)       = +v_T0_T     -v_T_L1  -v_L1_LIP    +Flush 
+
+d/dt(LI1)     = +v_T_L1     - RA
+
+d/dt(LIP)     = +v_L1_LIP  -Flush
+
+d/dt(Chp)     = +RA    -BREAKDOWN  
+
+LS(0)           = 0
+T(0)            = 0
+T(0)            = 0
+LI1(0)          = 0
+LIP(0)          = 0
+Chp(0)          = 0
+
+********** MODEL PARAMETERS
+kL1          =  0.0191
+kd           =  0.2139
+kLIP1        =  0.0429
+kLIP2        =  0.0122
+kBreakdown   =  0.1117
+
+%---------------------------------------------------------------------------------------%
+%% inputs
+sex                              = 1                  % boolean
+height                           = 1.78               % m
+weight                           = 80                 % years
+
+carb_flow                        =  0.179999854769327     % g/min
+protein_flow                     =  0.109998207075086     % g/min
+lipids_flow                      =  0.0999998992684958    % g/min
+
+
+********** MODEL VARIABLES
+
+VolumeBloodPeripheral = (sex > 0) ? 0.3669*(height^3) + 0.03219*weight + 0.6041 : 0.3561*(height^3) + 0.03308*weight + 0.1833
+
+f1        =  lipids_flow
+f2        =  carb_flow + protein_flow 
+
+v_S_T0    = LS*kL1
+v_T0_T    = T0*kL1
+
+v_T_L1    = T*kL1 
+v_L1_LIP  = T*kLIP1
+
+Flush     = LIP*(kLIP2 + sng )  
+
+RA        = LI1*kL1
+
+BREAKDOWN = Chp*kBreakdown
+
+
+%--INPUT-------------------------------------------------------------------------------%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%----%
+%% Assume mostley TG in chylomicron;  triglycerides (85–92%), phospholipids (6–12%)
+%% Chylomicron_TG, fraction TG in chylomicron? Using MW for TAG. Avrege MW 807.3202 g/mol https://hmdb.ca/metabolites/HMDB0005356 
+%% NOTE: The MW and Molar mass, is different depning on the dietary source of the TAG, and type/length.
+%% Intestines_Lipid(g) /( 807.3202 g/mol ) = 1000*Intestines_Lipid (mmole)
+%% Chp state is in moles
+
+input   = 1000*lipids_flow/807.3202   
+
+%--OUTPUT-------------------------------------------------------------------------------%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%----%
+%% Matching names with names in data structure - for plotting and data comparison
+
+Plasma_Chylomicron           = (Chp)/(VolumeBloodPeripheral)     % mM   
+
+********** MODEL REACTIONS
+********** MODEL FUNCTIONS
+********** MODEL EVENTS
+********** MODEL MATLAB FUNCTIONS
