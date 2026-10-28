@@ -4,9 +4,13 @@ clc
 
 warning 'off'
 
+%% BMI-dependent plasma chylomicron dynamics with MCMC uncertainty.
+% Reuses the regression-based BMI calibration from Figure3_unc.m.
+% Adds comparisons for second-meal peak time and clearance back to baseline
+% across BMI values 20-35.
 
 %% Model setup
-modelName = 'M10';
+modelName = 'M7';
 setup
 
 [col1m, col2m, figureindexlist] = color_groups(); 
@@ -21,21 +25,26 @@ for s_chi2 = string(fields(D))'
 end
 chi2_lim = chi2inv(0.95, dp);
 
-folder_unc = ['./RESULTS/MCMC/' modelName '/Calibration_kBreakdown_kL1/[0.0001,10000]/All/' ]; choice_calibration = 2;
+choice_calibration = 2;  % pooled parameter sets come from RESULTS/PROC/sorted_parameters/M10/All.mat
 proc_file = ['./RESULTS/PROC/Full_' modelName '_[0.0001,10000].mat'];
 proc_unc_file = ['./RESULTS/PROC/BMI_Chylodynamics_' modelName '_[0.0001,10000].mat'];
 
 
+
 %% Options
-doProcessBMIUnc = 0;
+doProcessBMIUnc = 1;
+
 unc_step_proc   = 1; % steps in processing
 
+
 auto_save_fig = 1;
-fig_file = './FIGURES/FIGURE3/Figure_3_BMI_chylodynamics_unc.png';
+fig_file = './Figures/Figure3/Figure_3_BMI_chylodynamics_unc.png';
 BMI_grid   = [20,  25, 30];
 mt_gap_h   = [2, 5, 8];  % hours between meal 1 and meal 2 for timing comparison (3 scenarios)
-mt_window  = 1440;  % min — full 24-h window (08:00 → 08:00 next day)
+mt_window  = 1440;  % min — full 24-h window (08:00 \u2192 08:00 next day) of the final day shown
 mt_ref_bmi = BMI_grid(ceil(numel(BMI_grid)/2));  % representative BMI for meal-timing UNC
+mt_periodic_days = 28;  % repeat the daily meal-timing schedule for this many days to reach
+                        % periodic steady state; only the final day (24 h) is plotted
 
 %% Custom meal schedule for the BMI simulations (Barrows et al. 2005)
 % Two meals at t=0 and t=300 min, 15 min each, 117g CHO / 30g fat / 30g protein
@@ -60,7 +69,6 @@ else
     error('Processed file not found: %s', proc_file)
 end
 %%% Loading processed results from figure 3.
-
 
 %% Build BMI regressions from calibration best-fit values
 n = fieldnames(D);
@@ -88,8 +96,8 @@ k_kL1 = table2array(mdl_kL1.Coefficients('x1', 'Estimate'));
 BMI_breakdown = @(BMI) m_breakdown + k_breakdown * BMI;
 BMI_kL1 = @(BMI) m_kL1 + k_kL1 * BMI;
 
-
 %% 
+
 ratesidX = find(ismember(utility.pNames, 'kBreakdown'));
 idx_kbreakdown = ismember(utility.pNames(1:ratesidX), 'kBreakdown');
 idx_kL1 = ismember(utility.pNames(1:ratesidX), 'kL1');
@@ -111,6 +119,11 @@ for bmi_idx = 1:numel(BMI_grid)
     BEST(bmi_idx).time = tmp_best.time(:);
     BEST(bmi_idx).y = tmp_best.variablevalues(:, end);  % Plasma_Chylomicron
     BEST(bmi_idx).mean_values_chylomicron = mean(tmp_best.variablevalues(:, end));
+
+
+%     tmp = simulate_custom_meals(mexmodel, theta_b, anthro, meal_starts, meal_durations, ...
+%         meal_carbohydrates, meal_fat, meal_protein, post_meal_duration);
+
 
 
 end
@@ -137,39 +150,32 @@ for mt_idx = 1:numel(mt_gap_h)
     UNC_MT(mt_idx).min                = [];
     UNC_MT(mt_idx).max                = [];
     UNC_MT(mt_idx).mean_values_chylomicron = [];
+    UNC_MT(mt_idx).peak_values_chylomicron = [];
 end
 
-
-%% Check so that everything is in order to run script!
 
 
 
 %%
 if doProcessBMIUnc
+    %%% Pooled MCMC+UNC parameter sets, filtered to cost < chi2_lim (same threshold as before)
+    [theta_kept, cost_kept, ~] = load_sorted_parameters(modelName, 'All', struct('mode','absolute','value',chi2_lim), [], 'Calibration_kBreakdown_kL1');
+    fprintf('UNC samples within chi2_lim threshold (%.1f): %d\n', chi2_lim, size(theta_kept,1));
 
-    tmp2 = dir(folder_unc) ;
-    for jj = 1:size(tmp2,1)-2
-
-
-    load([folder_unc tmp2(2 + jj).name]);
-
-    all_S = parameters.S;
-
-    all_S = [  all_S.logPost*-1 , all_S.par' ]; % cost then parameters
-    all_S = unique(all_S,'rows') ;
-
-    all_S = all_S(all_S(:,1) < chi2_lim, :);
-    fprintf('UNC samples within chi2_lim threshold (%.1f): %d\n', chi2_lim, size(all_S,1));
-
-
-    n_unc_total = size(all_S, 1);
-
+    n_unc_total = size(theta_kept, 1);
+    % best_mcmc_cost        = Inf;
+    % best_mcmc_theta_base  = [];
     wb = waitbar(0, 'Processing BMI uncertainty (0%)...', 'Name', 'BMI UNC');
     for ii = 1:unc_step_proc:n_unc_total
             
-            theta_sample = exp(all_S(ii, 2:end));  % This is the parameter vector
+            theta_sample = theta_kept(ii, :);  % This is the parameter vector (already linear space)
             theta_base = theta_sample(1:ratesidX); % This is the parameter vector without clibration parameters from estimate
             
+            % if cost_kept(ii) < best_mcmc_cost %  Dont thin we need this?
+            % As we already know the best from previous processing
+            %     best_mcmc_cost       = cost_kept(ii);
+            %     best_mcmc_theta_base = theta_base;
+            % end
 
             for bmi_idx = 1:numel(BMI_grid)
                 bmi = BMI_grid(bmi_idx);
@@ -179,6 +185,9 @@ if doProcessBMIUnc
 
                 tmp_sim = simulate_custom_meals(mexmodel, theta_b, anthro, meal_starts, meal_durations, meal_carbohydrates, meal_fat, meal_protein, post_meal_duration);
                 y = tmp_sim.variablevalues(:, end);
+
+                % [peak_time, clearance_time] = second_meal_metrics(...
+                %     tmp_sim.time(:), y(:), second_meal_start, baseline_window_start, clearance_tol);
 
                 if isempty(UNC_BMI(bmi_idx).time)
                     UNC_BMI(bmi_idx).time = tmp_sim.time(:);
@@ -190,25 +199,32 @@ if doProcessBMIUnc
                 end
 
                 UNC_BMI(bmi_idx).mean_values_chylomicron(end+1,1) = mean(y);
+
+                %t_s = tmp_sim.time(:);
+                %UNC_BMI(bmi_idx).mean_chylo_samples(end+1,1) = trapz(t_s, y(:)) / (t_s(end) - t_s(1));
+                %UNC_BMI(bmi_idx).peak_chylo_samples(end+1,1) = max(y(:));
             end
 
-            % Meal-timing UNC at reference BMI
+            % Meal-timing UNC at reference BMI — repeat the daily schedule for
+            % mt_periodic_days to reach periodic steady state, then keep only the final day.
             theta_mt_u = theta_base;
             theta_mt_u(idx_kbreakdown) = exp(BMI_breakdown(mt_ref_bmi));
             theta_mt_u(idx_kL1)        = exp(BMI_kL1(mt_ref_bmi));
             for mt_idx = 1:numel(mt_gap_h)
                 gap_min_u = mt_gap_h(mt_idx) * 60;
-                mt_post_u = max(30, mt_window - (gap_min_u + 30));
+                mt_post_u = mt_window - (gap_min_u + 30);  % reach the end of the final day
+                [ms_u, md_u, mc_u, mf_u, mp_u] = build_mt_periodic_schedule(gap_min_u, mt_periodic_days);
 
                 tmp_mt_u = simulate_custom_meals(mexmodel, theta_mt_u, anthro, ...
-                    [0, gap_min_u], [15, 30], [59, 117], [15, 30], [15, 30], mt_post_u);
+                    ms_u, md_u, mc_u, mf_u, mp_u, mt_post_u);
 
-                % y_mt_ui = interp1(tmp_mt_u.time(:), tmp_mt_u.variablevalues(:,end), ...
-                %     (0:mt_window)', 'pchip');
-                y2 = tmp_mt_u.variablevalues(:, end);
+                t_full_u = tmp_mt_u.time(:);
+                final_day_idx_u = t_full_u >= (mt_periodic_days-1)*1440;
+                t2 = t_full_u(final_day_idx_u) - (mt_periodic_days-1)*1440;
+                y2 = tmp_mt_u.variablevalues(final_day_idx_u, end);
 
                 if isempty(UNC_MT(mt_idx).time)
-                    UNC_MT(mt_idx).time = (0:mt_window)';
+                    UNC_MT(mt_idx).time = t2;
                     UNC_MT(mt_idx).min  = y2;
                     UNC_MT(mt_idx).max  = y2;
                 else
@@ -216,6 +232,7 @@ if doProcessBMIUnc
                         UNC_MT(mt_idx).max, UNC_MT(mt_idx).min, y2);
                 end
                 UNC_MT(mt_idx).mean_values_chylomicron(end+1,1) = mean(y2);
+                UNC_MT(mt_idx).peak_values_chylomicron(end+1,1) = max(y2);
             end
             waitbar(ii / n_unc_total, wb, sprintf('Processing BMI uncertainty (%d%%)', round(ii/n_unc_total*100)));
     end
@@ -244,7 +261,6 @@ if doProcessBMIUnc
     U.mt_window           = mt_window;
     U.best_mcmc_theta_base = theta_best_base ;
     save(proc_unc_file, 'U');
-    end
 
 end
 
@@ -412,6 +428,8 @@ colorbar(ax_C,'off')
 set(gca,'fontsize',12);
 
 
+
+
 % ── Panel D: Meal timing trajectories (3 options) with MCMC uncertainty ──────
 ax_D = nexttile;
 hold(ax_D, 'on');
@@ -431,13 +449,19 @@ fill(ax_D, [xs,xe,xe,xs], [yl_B(1),yl_B(1),yl_B(1)+rect_h_B,yl_B(1)+rect_h_B], .
 hold on 
 for mt_idx = 1:numel(mt_gap_h)
     gap_min_p = mt_gap_h(mt_idx) * 60;
-    mt_post_p = max(30, mt_window - (gap_min_p + 30));
+    mt_post_p = mt_window - (gap_min_p + 30);  % reach the end of the final day
     theta_p   = mcmc_theta_base;
     theta_p(idx_kbreakdown) = exp(BMI_breakdown(mt_ref_bmi));
     theta_p(idx_kL1)        = exp(BMI_kL1(mt_ref_bmi));
-    tmp_p = simulate_custom_meals(mexmodel, theta_p, anthro, [0, gap_min_p], ...
-        [15, 30], [59, 117], [15, 30], [15, 30], mt_post_p);
-    plot(ax_D, tmp_p.time(:), tmp_p.variablevalues(:,end), 'Color', cols_mt(mt_idx,:), ...
+    [ms_p, md_p, mc_p, mf_p, mp_p] = build_mt_periodic_schedule(gap_min_p, mt_periodic_days);
+    tmp_p = simulate_custom_meals(mexmodel, theta_p, anthro, ms_p, md_p, mc_p, mf_p, mp_p, mt_post_p);
+
+    t_full_p = tmp_p.time(:);
+    final_day_idx_p = t_full_p >= (mt_periodic_days-1)*1440;
+    t_p = t_full_p(final_day_idx_p) - (mt_periodic_days-1)*1440;
+    y_p = tmp_p.variablevalues(final_day_idx_p, end);
+
+    plot(ax_D, t_p, y_p, 'Color', cols_mt(mt_idx,:), ...
         'LineWidth', 1.8, 'DisplayName', sprintf('%dh gap', mt_gap_h(mt_idx)));
 
 yl_B = ylim(ax_D);
@@ -469,15 +493,15 @@ hold(ax_E, 'on');
 
 % Draw scatter dots first so UNC bands render on top
 for mt_idx = 1:numel(mt_gap_h)
-    bf_mean = mean(UNC_MT(mt_idx).mean_values_chylomicron);
-    plot(ax_E, [mt_idx-0.05 mt_idx+0.05]  , [bf_mean bf_mean], 'color', cols_mt(mt_idx,:) ,'LineWidth', 1.5 );
+    bf_peak = mean(UNC_MT(mt_idx).peak_values_chylomicron);
+    plot(ax_E, [mt_idx-0.05 mt_idx+0.05]  , [bf_peak bf_peak], 'color', cols_mt(mt_idx,:) ,'LineWidth', 1.5 );
 
     % scatter(ax_E, mt_idx, min(UNC_MT(mt_idx).mean_values_chylomicron), 30, cols_mt(mt_idx,:), 'filled', ...
     %     'MarkerEdgeColor', 'k', 'DisplayName', sprintf('BMI %d', BMI_grid(mt_idx)) ,'MarkerFaceAlpha', 0.5,'HandleVisibility','off');
     % scatter(ax_E, mt_idx, max(UNC_MT(mt_idx).mean_values_chylomicron), 30, cols_mt(mt_idx,:), 'filled', ...
     %     'MarkerEdgeColor', 'k', 'DisplayName', sprintf('BMI %d', BMI_grid(mt_idx)) ,'MarkerFaceAlpha', 0.5,'HandleVisibility','off');
 
-y = UNC_MT(mt_idx).mean_values_chylomicron;
+y = UNC_MT(mt_idx).peak_values_chylomicron;
 
 patch(ax_E,...
     [mt_idx-.15 mt_idx+.15 mt_idx+.15 mt_idx-.15],...
@@ -491,9 +515,9 @@ patch(ax_E,...
 end
 
 xticks(ax_E, 1:numel(BMI_grid));
-xticklabels(ax_E, arrayfun(@num2str, BMI_grid, 'UniformOutput', false));
-xlabel(ax_E, 'Meal gap (meal 1 \rightarrow meal 2)');
-ylabel(ax_E, 'Mean plasma chylomicron over 24 h (mmol/L)');
+xticklabels(ax_E, arrayfun(@num2str, [ 2 5 8], 'UniformOutput', false));
+xlabel(ax_E, 'Meal gap (meal 1 \rightarrow meal 2) (h)');
+ylabel(ax_E, 'Peak plasma chylomicron (mmol/L)');
 %legend(ax_E, 'Location', 'northeast', 'FontSize', 12);
 box(ax_E, 'off');
 title( ax_E, '(E)','FontSize', 16,'fontweight','bold');
@@ -506,6 +530,13 @@ set(gca,'fontsize',12);
 if auto_save_fig
     exportgraphics(f_all, fig_file, 'ContentType', 'vector', 'BackgroundColor', 'none');
 end
+
+
+
+
+
+
+
 
 
 
@@ -576,6 +607,15 @@ end
 end
 
 
-
+function [ms, md, mc, mf, mp] = build_mt_periodic_schedule(gap_min, total_days)
+% Repeats the two-meal daily pattern (59/117 g CHO, 15/30 g fat & protein)
+% for total_days consecutive days, each day starting 1440 min after the last.
+day_offsets = (0:total_days-1) * 1440;
+ms = reshape([day_offsets; day_offsets + gap_min], 1, []);
+md = repmat([15, 30], 1, total_days);
+mc = repmat([59, 117], 1, total_days);
+mf = repmat([15, 30], 1, total_days);
+mp = repmat([15, 30], 1, total_days);
+end
 
 

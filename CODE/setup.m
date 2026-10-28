@@ -19,7 +19,7 @@ end
 
 
 %%
-modelName = 'M10' ;
+modelName = 'M7' ;
 cd('./MODEL/')
 model = IQMmodel([modelName '.txt']);
 IQMmakeMEXmodel(model);

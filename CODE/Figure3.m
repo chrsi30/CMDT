@@ -10,7 +10,7 @@ warning 'off'
 % simulation panels (calibration + validation).
 
 %% Model setup
-modelName = 'M10';
+modelName = 'M7';
 setup
 
 idx = logical ( (utility.Indx_for_input - 1).*(-1) );
@@ -20,19 +20,19 @@ pnames = utility.pNames(idx);
 
 [col1m, col2m, figureindexlist]  = color_groups();
 
+fig_out_dir_f3 = ['./FIGURES/Figure3/' modelName '/'];
+if ~exist(fig_out_dir_f3, 'dir'), mkdir(fig_out_dir_f3); end
+fig_out_dir_f2 = ['./FIGURES/Figure2/' modelName '/from_Figure3_unc/'];
+if ~exist(fig_out_dir_f2, 'dir'), mkdir(fig_out_dir_f2); end
 
 
 %% Setup data
 [D,D_validation, stdn] = setup_data('all'); % 'all'
 
-folder = ['./RESULTS/MCMC/' modelName '/Calibration_kBreakdown_kL1/[0.0001,10000]/All/' ]; choice_calibration = 2;
-%folder = ['./RESULTS/MCMC/' modelName '/Calibration_kBreakdown_kL1/[0.001,1000]/All/' ]; choice_calibration = 2;
-%folder = ['./RESULTS/MCMC/' modelName '/Calibration_kBreakdown/[0.001,1000]/All/' ]; choice_calibration = 1;
-%folder = ['./RESULTS/MCMC/' modelName '/Calibration_kL1/[0.001,1000]/All/' ]; choice_calibration = 1;
-
-tmp2 = dir(folder) ;
-
+choice_calibration = 2;
+%choice_calibration = 1;  % use with calib_param = {'kBreakdown'} or {'kL1'} only
 %calib_param{1} = 'kL1' ;  % 'kBreakdown';
+
 calib_param{1} = 'kBreakdown' ; 
 calib_param{2} = 'kL1' ;
 
@@ -42,10 +42,10 @@ doProcessing            = 0;   % Re-process calibration uncertainty from MCMC
 doProcessing_validation = 0;   % Re-process validation uncertainty from MCMC
 
 %%% Plot options
-doSupplementary_regressions    = 1;   
+doSupplementary_regressions    = 0;   
 doFigure2                      = 1;
-doFigure3                      = 1;
-doFigure3_boxplot              = 1;
+doFigure3                      = 0;
+doFigure3_boxplot              = 0;
 
 %% Count chylomicron data points in estimation data (D)
 dp = 0;
@@ -74,35 +74,26 @@ load(tmp_ess, 'Results');
 ess_param = Results.xbest;
 ess_cost  = costfunction(ess_param, mexmodel, D, utility, choice_calibration, calib_param, 1);
 disp(['ESS best cost: ' num2str(ess_cost)])
-%% Comparing ESS cost to all costs in MCMC unc.
-best_cost = ess_cost;         best_param = ess_param;
-for jj = 1:size(tmp2,1)-2
 
-    load([folder tmp2(2 + jj).name]);
+%% Comparing ESS cost to all costs in MCMC+UNC unc.
+if choice_calibration == 2
+[~, ~, info_all] = load_sorted_parameters(modelName, 'All', struct('mode','none'), [], ['Calibration_' calib_param{1} '_' calib_param{2}]);
+elseif choice_calibration == 1
+[~, ~, info_all] = load_sorted_parameters(modelName, 'All', struct('mode','none'), [], ['Calibration_' calib_param{1} ]);
+end
+mcmc_cost_best = info_all.best.cost;
 
-    S = parameters.S;
-
-    S = [ S.par' , S.logPost*-1 ];
-    S = unique(S,'rows') ;
-        best = S( S(:,end) == min(S(:,end)), :  ) ;
-
-    mcmc_cost  = best(end);
-    if jj == 1
-        mcmc_cost_best = mcmc_cost;
-    end
-
-    if mcmc_cost < best_cost
-        best_param = best(1:end-1);
-        best_cost  = mcmc_cost;
-        mcmc_cost_best = best_cost;
-    end
+best_cost = ess_cost;         best_param = log(ess_param);  % ESS runs with log_var, so xbest is returned in linear scale
+if mcmc_cost_best < best_cost
+    best_param = log(info_all.best.theta);  % keep log-space, matching ess_param convention
+    best_cost  = mcmc_cost_best;
 end
 %% =========================================================
 %% Best parameter set: lower cost of loaded R vs ESS
 %% =========================================================
 if ess_cost <= mcmc_cost_best
     best_param_plot = exp(best_param);
-    disp(['Using ESS best (cost=' num2str(ess_cost) ') over MCMC best (cost=' num2str(mcmc_cost_bestt) ')'])
+    disp(['Using ESS best (cost=' num2str(ess_cost) ') over MCMC best (cost=' num2str(mcmc_cost_best) ')'])
 else
     best_param_plot = exp(best_param);
     disp(['Using MCMC best (cost=' num2str(mcmc_cost_best) ') over ESS best (cost=' num2str(ess_cost) ')'])
@@ -113,32 +104,21 @@ end
 %% Extracting Calibration Uncertainty (same as Figure3.m)
 %% =========================================================
 if doProcessing
-    for jj = 1:size(tmp2,1)-2
+    %%% Pooled MCMC+UNC parameter sets, filtered by the chylomicron-datapoint chi2 limit
+    if choice_calibration == 2
+    [theta_kept, cost_kept, ~] = load_sorted_parameters(modelName, 'All', struct('mode','absolute','value',porc_limit), [], ['Calibration_' calib_param{1} '_' calib_param{2}]);
+    elseif choice_calibration == 1
+    [theta_kept, cost_kept, ~] = load_sorted_parameters(modelName, 'All', struct('mode','absolute','value',porc_limit), [], ['Calibration_' calib_param{1}]);
+    end
+    for ii = 1:unc_step_proc:size(theta_kept,1) % OBS
 
-
-        load([folder tmp2(2 + jj).name]);
-
-        S = parameters.S;
-
-        S = [ S.par' , S.logPost*-1 ];
-        S = unique(S,'rows') ;
-
-        %% Finding the soluation with lowest cost!
-        %%
-
-        %% Sorting X2 + chi2lim based on chylomicron data points
-        S = S(   S(:,end) < porc_limit , : ); 
-        %%
-
-        for ii = 1:unc_step_proc:size(S,1) % OBS
-
-            pct      = floor(ii / size(S,1) * 10) * 10;
-            pct_prev = floor(max(ii - unc_step_proc, 0) / size(S,1) * 10) * 10;
+            pct      = floor(ii / size(theta_kept,1) * 10) * 10;
+            pct_prev = floor(max(ii - unc_step_proc, 0) / size(theta_kept,1) * 10) * 10;
             if ii == 1 || pct > pct_prev
                 disp(['  Calibration UNC: ' int2str(max(pct, 0)) '%'])
             end
 
-            theta = exp( S(ii,1:end-1) );  %% kolla ifall det behövs exp
+            theta = theta_kept(ii, :);
 
             if  choice_calibration == 1
                 ratesidX = find( ismember(utility.pNames, 'kBreakdown')) ;
@@ -207,22 +187,22 @@ if doProcessing
 
         end
 
-        for j = 1:length(pnames)
-            PARAMS.(string(pnames(j))) = S(:,j) ;
-        end
-        if choice_calibration == 2
-
-        ratesidX = find( ismember(utility.pNames, 'kBreakdown')) ;
-        num_studies = numel(fields(D));
-        cindx_start= (ratesidX + 1);
-
-        PARAMS.cvector1 = S(:,cindx_start:(cindx_start + num_studies)-1)  ;     
-        PARAMS.cvector2 = S(:,(cindx_start + num_studies):end-1) ;
-        end
-        COST.V =  S(:,end)  ;
+    for j = 1:length(pnames)
+        PARAMS.(string(pnames(j))) = log(theta_kept(:,j)) ;
     end
+    if choice_calibration == 2
+
+    ratesidX = find( ismember(utility.pNames, 'kBreakdown')) ;
+    num_studies = numel(fields(D));
+    cindx_start= (ratesidX + 1);
+
+    PARAMS.cvector1 = log(theta_kept(:,cindx_start:(cindx_start + num_studies)-1))  ;
+    PARAMS.cvector2 = log(theta_kept(:,(cindx_start + num_studies):end))  ;
+    end
+    COST.V =  cost_kept  ;
 
     R.UNC = UNC; R.PARAMS = PARAMS; R.best_param = best_param; R.best_cost = best_cost;
+    R.calib_config = struct('choice_calibration', choice_calibration, 'calib_param', {calib_param});
     save( ['./RESULTS/PROC/Full_' modelName '_[0.0001,10000].mat'],'R')
 end
 
@@ -232,8 +212,19 @@ if ~exist('R','var')
     load(['./RESULTS/PROC/Full_' modelName '_[0.0001,10000].mat']); disp('Loading previously processed results')
 end
 
+% Guard against silently plotting a cached R built under a different
+% choice_calibration/calib_param than the one currently selected above.
+if ~isfield(R, 'calib_config') || ...
+        ~isequal(R.calib_config.choice_calibration, choice_calibration) || ...
+        ~isequal(R.calib_config.calib_param, calib_param)
+    error(['Cached results in RESULTS/PROC/Full_' modelName '_[0.0001,10000].mat were built with a ' ...
+        'different choice_calibration/calib_param than currently selected. Set doProcessing = 1 ' ...
+        '(and doProcessing_validation = 1) to regenerate R for the current settings before plotting.']);
+end
 
 
+
+if doProcessing_validation
 
 %% =========================================================
 %% Regression model (needed for validation uncertainty)
@@ -259,15 +250,12 @@ k_kL1r = table2array(mdl_kL1r.Coefficients('x1', 'Estimate'));
 BMI_breakdown = @(BMI) m_bd   + k_bd   * BMI;
 BMI_kL1       = @(BMI) m_kL1r + k_kL1r * BMI;
 
-%% Choice of validation dataset
 D_validation_sub.val1  = rmfield(D_validation,["Runge_2009", "Sosa_2021", "Sosa_2021_IR","Evans_1998_hf" "Fielding_1996_nL" "Fielding_1996_HF" "Fielding_1996_LF"]); % Only Hodson et al. 2007
 %D_validation_sub.val2  = rmfield(D_validation,["Hodson_2007_f" "Hodson_2007_ISm" "Hodson_2007_IRm" "Runge_2009", "Sosa_2021", "Sosa_2021_IR"]); % Only Fielding et al. 1996 + Evan et al. 1998 High-fat
 %D_validation_sub.val3 = rmfield(D_validation,["Fielding_1996_nL" "Fielding_1996_HF" "Fielding_1996_LF" "Hodson_2007_f" "Hodson_2007_ISm" "Hodson_2007_IRm" "Evans_1998_hf"]); % All TG
 %D_validation_sub.val4 = rmfield(D_validation,[ "Runge_2009", "Sosa_2021", "Sosa_2021_IR"]);
+
 val_study_set = 1;
-
-if doProcessing_validation
-
 %% =========================================================
 %% Extracting Validation Uncertainty from MCMC samples
 %% =========================================================
@@ -277,65 +265,54 @@ if doProcessing_validation
 % all other model parameters.
     disp('Computing validation uncertainty from MCMC samples...')
 
-    tmp2 = dir(folder) ;
+    [theta_kept_val, ~, ~] = load_sorted_parameters(modelName, 'All', struct('mode','absolute','value',porc_limit), [], ['Calibration_' calib_param{1} '_' calib_param{2}]);
     first_sample = true;
 
-    for jj = 1:size(tmp2,1)-2
+    ratesidX = find( ismember(utility.pNames, 'kBreakdown')) ;
+    idx_kbreakdown = ismember(utility.pNames(1:ratesidX), 'kBreakdown') ;
+    idx_kL1        = ismember(utility.pNames(1:ratesidX), 'kL1') ;
 
-        load([folder tmp2(2 + jj).name]);
+    for ii = 1:unc_step_proc:size(theta_kept_val,1)
 
-        S = parameters.S;
-        S = [ S.par' , S.logPost*-1 ];
-        S = unique(S,'rows') ;
+        pct      = floor(ii / size(theta_kept_val,1) * 10) * 10;
+        pct_prev = floor(max(ii - unc_step_proc, 0) / size(theta_kept_val,1) * 10) * 10;
+        if ii == 1 || pct > pct_prev
+            disp(['  Validation UNC:  ' int2str(max(pct, 0)) '%'])
+        end
 
-        S = S( S(:,end)  < porc_limit , : ); %(best_cost_v + chi2inv(0.95,1'))  chi2_lim
+        theta  = theta_kept_val(ii, :);
+        thetar = theta(1:ratesidX);
 
-        ratesidX = find( ismember(utility.pNames, 'kBreakdown')) ;
-        idx_kbreakdown = ismember(utility.pNames(1:ratesidX), 'kBreakdown') ;
-        idx_kL1        = ismember(utility.pNames(1:ratesidX), 'kL1') ;
+        for jjj = val_study_set  % val1 only (main figure; mirrors main Figure3 validation section)
+            Dval = D_validation_sub.(['val' int2str(jjj)]);
 
-        for ii = 1:unc_step_proc:size(S,1)
+            for study = string(fields(Dval))'
 
-            pct      = floor(ii / size(S,1) * 10) * 10;
-            pct_prev = floor(max(ii - unc_step_proc, 0) / size(S,1) * 10) * 10;
-            if ii == 1 || pct > pct_prev
-                disp(['  Validation UNC:  ' int2str(max(pct, 0)) '%'])
-            end
+                if isfield(Dval.(study).meta, 'BMI')
+                    thetar(idx_kbreakdown) = exp(BMI_breakdown(Dval.(study).meta.BMI(1)));
+                    thetar(idx_kL1)        = exp(BMI_kL1(Dval.(study).meta.BMI(1)));
+                end
 
-            theta  = exp( S(ii,1:end-1) );
-            thetar = theta(1:ratesidX);
+                [tmp_sim, ~] = simulate(thetar, mexmodel, Dval.(study), 1);
 
-            for jjj = val_study_set  % val1 only (main figure; mirrors main Figure3 validation section)
-                Dval = D_validation_sub.(['val' int2str(jjj)]);
+                for observable = string(fields(Dval.(study)))'
+                    observable_in_sim = ismember(tmp_sim.variables, observable);
+                    if any(observable_in_sim)
+                        y = tmp_sim.variablevalues(:, observable_in_sim);  % raw model values
 
-                for study = string(fields(Dval))'
-
-                    if isfield(Dval.(study).meta, 'BMI')
-                        thetar(idx_kbreakdown) = exp(BMI_breakdown(Dval.(study).meta.BMI(1)));
-                        thetar(idx_kL1)        = exp(BMI_kL1(Dval.(study).meta.BMI(1)));
-                    end
-
-                    [tmp_sim, ~] = simulate(thetar, mexmodel, Dval.(study), 1);
-
-                    for observable = string(fields(Dval.(study)))'
-                        observable_in_sim = ismember(tmp_sim.variables, observable);
-                        if any(observable_in_sim)
-                            y = tmp_sim.variablevalues(:, observable_in_sim);  % raw model values
-
-                            if first_sample
-                                UNC_val.(study).(observable).max  = y;
-                                UNC_val.(study).(observable).min  = y;
-                                UNC_val.(study).(observable).time = tmp_sim.time;
-                            else
-                                [UNC_val.(study).(observable).max, UNC_val.(study).(observable).min] = ...
-                                    calc_min_max(UNC_val.(study).(observable).max, UNC_val.(study).(observable).min, y);
-                            end
+                        if first_sample
+                            UNC_val.(study).(observable).max  = y;
+                            UNC_val.(study).(observable).min  = y;
+                            UNC_val.(study).(observable).time = tmp_sim.time;
+                        else
+                            [UNC_val.(study).(observable).max, UNC_val.(study).(observable).min] = ...
+                                calc_min_max(UNC_val.(study).(observable).max, UNC_val.(study).(observable).min, y);
                         end
                     end
                 end
             end
-            first_sample = false;
         end
+        first_sample = false;
     end
 
     R.UNC_val = UNC_val;
@@ -375,6 +352,8 @@ f = figure();
 set(gcf,'color','w')
 set(gcf, 'Units', 'centimeters');
 set(gcf,'position', [ 0  0 20 30])
+
+t = tiledlayout('flow');
 
 figindex = 0;
 
@@ -607,9 +586,16 @@ for study = string(fields(Dval))'
 end
 end
 
-exportgraphics(gcf, './FIGURES/FIGURE3/Figure_3_unc_main.png', 'ContentType', 'vector', 'BackgroundColor', 'none');
-exportgraphics(gcf, './FIGURES/FIGURE3/Figure_3.eps', 'ContentType', 'vector', 'BackgroundColor','none');
-savefig(f, './FIGURES/FIGURE3/Figure3.fig')
+add_data_unc_sim_legend();
+
+exportgraphics(gcf, [fig_out_dir_f3 'Figure_3_unc_main_' modelName '.png'], 'ContentType', 'vector', 'BackgroundColor', 'none', 'Resolution', 600);
+try
+    exportgraphics(gcf, [fig_out_dir_f3 'Figure_3_' modelName '.eps'], 'ContentType', 'vector', 'BackgroundColor','none');
+catch ME
+    warning('EPS export failed (%s); falling back to print(). Saving PNG/FIG still succeeded.', ME.message);
+    print(f, [fig_out_dir_f3 'Figure_3_' modelName '.eps'], '-depsc', '-painters');
+end
+savefig(f, [fig_out_dir_f3 'Figure3_' modelName '.fig'])
 
 end
 
@@ -646,6 +632,14 @@ if choice_calibration == 2  %% Main case of two calibration parameters - have no
     end
 end
 
+exportgraphics(gcf, [fig_out_dir_f3 'Figure_3_boxplot_' modelName '.png'], 'ContentType', 'vector', 'BackgroundColor', 'none', 'Resolution', 600);
+try
+    exportgraphics(gcf, [fig_out_dir_f3 'Figure_3_boxplot_' modelName '.eps'], 'ContentType', 'vector', 'BackgroundColor','none');
+catch ME
+    warning('EPS export failed (%s); falling back to print(). Saving PNG/FIG still succeeded.', ME.message);
+    print(f, [fig_out_dir_f3 'Figure_3_boxplot_' modelName '.eps'], '-depsc', '-painters');
+end
+savefig(f, [fig_out_dir_f3 'Figure3_boxplot_' modelName '.fig'])
 
 end
 
@@ -868,7 +862,7 @@ for j = [ "kBreakdown" , "kL1"]
     box 'off'
 
 end
-exportgraphics(gcf, './FIGURES/FIGURE3/supplement_regression.png', 'ContentType', 'vector', 'BackgroundColor', 'none');
+exportgraphics(gcf, [fig_out_dir_f3 'supplement_regression_' modelName '.png'], 'ContentType', 'vector', 'BackgroundColor', 'none', 'Resolution', 600);
 end
 
 
@@ -971,7 +965,13 @@ for study = string(fields(D))'
 
             plot(tmp.time, y ,'k', 'LineWidth', 1.5)
 
-            xlim([ D.(study).(observable).Time(1)  D.(study).(observable).Time(end) ])
+            % Vors delta-baseline is anchored at t=0 (meal start), so extend the
+            % visible range down to 0 to show the simulation actually starting there.
+            if contains(study,'Vors')
+                xlim([ 0  D.(study).(observable).Time(end) ])
+            else
+                xlim([ D.(study).(observable).Time(1)  D.(study).(observable).Time(end) ])
+            end
 
             if contains(study,'Vors')
                 ylabel( '\Deltammol/L','Interpreter','tex') ;
@@ -983,7 +983,10 @@ for study = string(fields(D))'
             grid off
             box  off
 
-            ylim([ 0 ,max(D.(study).(observable).Mean/conversion_factor)*2 ])
+            % Delta (Vors) data can dip below zero once the SEM is subtracted, so
+            % let the lower limit follow the data instead of clipping at 0.
+            y_lower = min(0, min(D.(study).(observable).Mean/conversion_factor - D.(study).(observable).SEM./conversion_factor));
+            ylim([ y_lower ,max(D.(study).(observable).Mean/conversion_factor)*2 ])
 
             if numel(D.(study).inputs.t) < 4
                 x = [   D.(study).inputs.t(2), D.(study).inputs.t(3) ,  D.(study).inputs.t(3), D.(study).inputs.t(2)  ] ;
@@ -1012,10 +1015,15 @@ for study = string(fields(D))'
     end
 end
 
-lgnd_function('')
-exportgraphics(gcf, './FIGURES/FIGURE2/Figure_2.png', 'ContentType', 'vector', 'BackgroundColor','none');
-exportgraphics(gcf, './FIGURES/FIGURE2/Figure_2.eps', 'ContentType', 'vector', 'BackgroundColor','none');
-savefig(f1, './FIGURES/FIGURE2/Figure2.fig')
+add_data_unc_sim_legend();
+exportgraphics(gcf, [fig_out_dir_f2 'Figure_2_unc_' modelName '.png'], 'ContentType', 'vector', 'BackgroundColor','none', 'Resolution', 600);
+try
+    exportgraphics(gcf, [fig_out_dir_f2 'Figure_2_unc_' modelName '.eps'], 'ContentType', 'vector', 'BackgroundColor','none');
+catch ME
+    warning('EPS export failed (%s); falling back to print(). Saving PNG/FIG still succeeded.', ME.message);
+    print(f1, [fig_out_dir_f2 'Figure_2_unc_' modelName '.eps'], '-depsc', '-painters');
+end
+savefig(f1, [fig_out_dir_f2 'Figure2_unc_' modelName '.fig'])
 end
 
 
@@ -1028,4 +1036,19 @@ function [max1, min1] = calc_min_max( in_max,in_min, sim )
 max1= in_max; min1 = in_min;
 max1( max1 < sim ) =  sim( max1 < sim);
 min1( min1 > sim ) =  sim( min1 > sim);
+end
+
+function add_data_unc_sim_legend()
+% Adds a single explanatory legend (data errorbar / uncertainty band /
+% best simulation) spanning the bottom of a tiledlayout. Reuses the last
+% plotted axes (via dummy NaN handles) instead of a dedicated nexttile,
+% so it doesn't consume/reshape a grid cell.
+ax = gca;
+hold(ax, 'on')
+h_data = errorbar(ax, NaN, NaN, NaN, 'O', 'MarkerEdgeColor', [0 0 0], 'MarkerFaceColor', [1 1 1], 'Color', [0 0 0], 'MarkerSize', 6, 'HandleVisibility', 'on');
+h_unc  = fill(ax, NaN, NaN, [0.8 0.8 0.8], 'EdgeColor', 'none', 'FaceAlpha', 1, 'HandleVisibility', 'on');
+h_sim  = plot(ax, NaN, NaN, 'k', 'LineWidth', 1.5, 'HandleVisibility', 'on');
+lgd = legend(ax, [h_data, h_unc, h_sim], {'Data', 'Uncertainty', 'Best simulation'}, ...
+    'Orientation', 'horizontal', 'Box', 'off');
+lgd.Layout.Tile = 'south';
 end
